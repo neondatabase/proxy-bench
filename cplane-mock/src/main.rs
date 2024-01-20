@@ -4,6 +4,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use tokio::signal::unix::{signal, SignalKind};
 
 #[derive(Clone)]
 struct Context {
@@ -25,8 +26,14 @@ async fn main() {
             compute_address: std::env::var("PROXY_COMPUTE_ADDR").unwrap(),
         });
 
+    let mut signal = signal(SignalKind::terminate()).unwrap();
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            signal.recv().await;
+        })
+        .await
+        .unwrap();
 }
 
 #[derive(Deserialize)]
@@ -40,7 +47,6 @@ const SCRAM_PASSWORD: &str = "SCRAM-SHA-256$4096:M2ZX/kfDSd3vv5iFO/QNUA==$mookt3
 #[derive(Serialize)]
 struct RoleSecretResponse {
     role_secret: &'static str,
-    allowed_ips: [&'static str; 1],
     project_id: String,
 }
 
@@ -48,7 +54,6 @@ async fn get_role_secret(query: Query<RoleSecretQuery>) -> Json<RoleSecretRespon
     let project_id = endpoint_id_to_project_id(&query.project);
     Json(RoleSecretResponse {
         role_secret: SCRAM_PASSWORD,
-        allowed_ips: ["127.0.0.1"],
         project_id,
     })
 }

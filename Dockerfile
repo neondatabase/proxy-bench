@@ -1,0 +1,24 @@
+FROM lukemathwalker/cargo-chef:latest-rust-1 AS chef
+WORKDIR /app
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS postgres-builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY . .
+RUN cargo build --release --bin postgres-mock
+
+FROM chef AS cplane-builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY . .
+RUN cargo build --release --bin cplane-mock
+
+FROM debian:bookworm-slim AS runtime
+WORKDIR /app
+COPY --from=postgres-builder /app/target/release/postgres-mock /usr/local/bin
+COPY --from=cplane-builder /app/target/release/cplane-mock /usr/local/bin
+

@@ -5,14 +5,19 @@ use hmac::{Hmac, Mac};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    select,
+    signal::unix::{signal, SignalKind},
 };
 
 #[tokio::main]
 async fn main() {
-    let listener = TcpListener::bind("0.0.0.0:5431").await.unwrap();
+    let mut signal = signal(SignalKind::terminate()).unwrap();
+    let listener = TcpListener::bind("0.0.0.0:5432").await.unwrap();
     loop {
-        let (socket, _) = listener.accept().await.unwrap();
-        tokio::spawn(handle(socket));
+        select! {
+            s = listener.accept() => tokio::spawn(handle(s.unwrap().0)),
+            _ = signal.recv() => break,
+        };
     }
 }
 
