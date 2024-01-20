@@ -4,8 +4,6 @@ services:
       context: .
       dockerfile: Dockerfile
     entrypoint: /usr/local/bin/postgres-mock
-    ports:
-      - "5430:5432"
 
   cplane:
     build:
@@ -14,8 +12,6 @@ services:
     entrypoint: /usr/local/bin/cplane-mock
     environment:
       PROXY_COMPUTE_ADDR: "postgres:5432"
-    ports:
-      - "3000:3000"
 
   haproxy:
     build:
@@ -23,11 +19,12 @@ services:
       dockerfile: haproxy.Dockerfile
     ports:
       - "5432:5432"
+      - "4443:4443"
+    depends_on:
+      - proxy
 
   proxy:
     image: "neondatabase/neon:release-4604"
-    environment:
-      PROXY_COMPUTE_ADDR: "postgres:5431"
     command:
       - proxy
       - --auth-backend
@@ -39,11 +36,14 @@ services:
       - -k
       - proxy.key
       - --proxy
-      - "0.0.0.0:5431"
+      - "0.0.0.0:5432"
       - --mgmt
       - "0.0.0.0:8080"
+      - --wss
+      - "0.0.0.0:4443"
     ports:
-      - "5431:5431"
+      - "5431:5432"
+      - "4442:4443"
     volumes:
       - type: bind
         source: target/proxy.crt
@@ -51,23 +51,6 @@ services:
       - type: bind
         source: target/proxy.key
         target: /data/proxy.key
-
-
-volumes:
-  db-data:
-    driver: flocker
-    driver_opts:
-      size: "10GiB"
-
-configs:
-  httpd-config:
-    external: true
-
-secrets:
-  server-certificate:
-    external: true
-
-networks:
-  # The presence of these objects is sufficient to define them
-  front-tier: {}
-  back-tier: {}
+    depends_on:
+      - cplane
+      - postgres
