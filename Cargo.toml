@@ -1,2 +1,2 @@
 [workspace]
-members = ["cplane-mock", "postgres-mock"]
+members = ["cplane-mock", "postgres-mock", "postgres-bench"]

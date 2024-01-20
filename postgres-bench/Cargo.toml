@@ -1,0 +1,12 @@
+[package]
+name = "postgres-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rustls = { version = "0.22.0" }
+rustls-pki-types = { version = "1", features = ["std"] }
+tokio = { version = "1", features = ["full"] }
+tokio-postgres = { version = "0.7.10" }
+tokio-postgres-rustls = "0.11.0"
+tokio-util = { version = "0.7", features = ["rt"] }
