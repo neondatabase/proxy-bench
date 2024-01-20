@@ -1,0 +1,2 @@
+[workspace]
+members = ["cplane-mock", "postgres-mock"]
