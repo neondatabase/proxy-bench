@@ -35,7 +35,9 @@ async fn handle(mut s: TcpStream) {
                     break buf.split_to(len).freeze();
                 }
             }
-            s.read_buf(&mut buf).await.unwrap();
+            if s.read_buf(&mut buf).await.unwrap() == 0 {
+                panic!("eof");
+            }
         };
 
         // exit
@@ -122,7 +124,9 @@ async fn handshake(s: &mut TcpStream, mut buf: &mut BytesMut) {
                 break buf.split_to(len).freeze();
             }
         }
-        s.read_buf(&mut buf).await.unwrap();
+        if s.read_buf(&mut buf).await.unwrap() == 0 {
+            return;
+        }
     };
 
     // server final message: proof for the client
