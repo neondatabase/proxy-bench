@@ -4,12 +4,14 @@ services:
       context: .
       dockerfile: Dockerfile
     entrypoint: /usr/local/bin/postgres-mock
+    scale: 1
 
   cplane:
     build:
       context: .
       dockerfile: Dockerfile
     entrypoint: /usr/local/bin/cplane-mock
+    scale: 1
     environment:
       PROXY_COMPUTE_ADDR: "postgres:5432"
 
@@ -18,26 +20,25 @@ services:
       context: .
       dockerfile: Dockerfile
     entrypoint: /usr/local/bin/postgres-bench
+    scale: 8
     environment:
       PG_HOST: "neon"
-      PG_ADDR: "haproxy:5432"
-      PG_CONNECTION_RATE: "800"
+      PG_ADDR: "proxy:5432"
+      PG_CONNECTION_RATE: "100"
       PG_CONNECTING_MAX: "100"
-      PG_CONNECTION_MAX: "4000"
-    depends_on:
-      - haproxy
-
-  haproxy:
-    image: haproxy:2.9
-    ports:
-      - "5432:5432"
-      - "4443:4443"
+      PG_CONNECTION_MAX: "200"
     depends_on:
       - proxy
-    volumes:
-      - type: bind
-        source: haproxy.cfg
-        target: /usr/local/etc/haproxy/haproxy.cfg
+
+  # haproxy:
+  #   image: haproxy:2.9
+  #   scale: 4
+  #   depends_on:
+  #     - proxy
+  #   volumes:
+  #     - type: bind
+  #       source: haproxy.cfg
+  #       target: /usr/local/etc/haproxy/haproxy.cfg
 
   proxy:
     image: "neondatabase/neon:release-4604"
@@ -57,9 +58,8 @@ services:
       - "0.0.0.0:8080"
       - --wss
       - "0.0.0.0:4443"
-    ports:
-      - "5431:5432"
-      - "4442:4443"
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
     volumes:
       - type: bind
         source: target/proxy.crt
@@ -70,3 +70,7 @@ services:
     depends_on:
       - cplane
       - postgres
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
