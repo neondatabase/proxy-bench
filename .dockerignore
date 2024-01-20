@@ -2,4 +2,4 @@
 !postgres-bench
 !postgres-mock
 !cplane-mock
-Cargo.*
+!Cargo.*

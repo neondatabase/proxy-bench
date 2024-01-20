@@ -2,17 +2,19 @@ use rand::{thread_rng, Rng};
 use rand_distr::Zipf;
 use std::{sync::Arc, time::Duration};
 use tokio::{
+    net::TcpStream,
     signal::unix::{signal, SignalKind},
     sync::Semaphore,
     time::Instant,
 };
-use tokio_postgres::Config;
+use tokio_postgres::{tls::MakeTlsConnect, Config};
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tokio_util::task::TaskTracker;
 
 #[tokio::main]
 async fn main() {
     let host = std::env::var("PG_HOST").expect("missing var PG_HOST");
+    let addr = std::env::var("PG_ADDR").expect("missing var PG_ADDR");
     let connection_rate: f64 = std::env::var("PG_CONNECTION_RATE")
         .expect("missing var PG_CONNECTION_RATE")
         .parse()
@@ -38,9 +40,7 @@ async fn main() {
     let interval = Duration::from_secs_f64(connection_rate.recip());
     let duration_until_full = interval * conn_max;
 
-    // let socker_addr = SocketAddr::from(([127, 0, 0, 1], 5432));
-
-    let tls = tls();
+    let mut tls = tls();
     let tracker = TaskTracker::new();
     let limiter = Arc::new(Semaphore::new(in_flight as usize));
     let conn_limiter = Arc::new(Semaphore::new(conn_max as usize));
@@ -52,7 +52,7 @@ async fn main() {
 
     let mut signal = signal(SignalKind::terminate()).unwrap();
 
-    let endpoint_dist = Zipf::new(100000, 1.5).unwrap();
+    let endpoint_dist = Zipf::new(100000, 1.01).unwrap();
     loop {
         let now = tokio::select! {
             _ = signal.recv() => break,
@@ -84,11 +84,16 @@ async fn main() {
         let domain = format!("ep-hello-world-{endpoint}.{host}");
         let dsn = format!("postgresql://demo:password@{domain}/db");
         let config: Config = dsn.parse().unwrap();
-        let tls = tls.clone();
+        let tls =
+            <MakeRustlsConnect as MakeTlsConnect<TcpStream>>::make_tls_connect(&mut tls, &domain)
+                .unwrap();
+
+        let connect = TcpStream::connect(addr.clone());
 
         counter += 1;
         tracker.spawn(async move {
-            let (client, connection) = config.connect(tls).await.unwrap();
+            let socket = connect.await.unwrap();
+            let (client, connection) = config.connect_raw(socket, tls).await.unwrap();
             drop(in_flight);
 
             let handle = tokio::spawn(connection);

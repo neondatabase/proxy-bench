@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
     entrypoint: /usr/local/bin/postgres-mock
+    networks:
+      - proxy
 
   cplane:
     build:
@@ -12,6 +14,8 @@ services:
     entrypoint: /usr/local/bin/cplane-mock
     environment:
       PROXY_COMPUTE_ADDR: "postgres:5432"
+    networks:
+      - proxy
 
   load:
     build:
@@ -20,13 +24,14 @@ services:
     entrypoint: /usr/local/bin/postgres-bench
     environment:
       PG_HOST: "neon"
-      PG_CONNECTION_RATE: "250"
+      PG_ADDR: "172.16.238.10:5432"
+      PG_CONNECTION_RATE: "400"
       PG_CONNECTING_MAX: "500"
-      PG_CONNECTION_MAX: "5000"
+      PG_CONNECTION_MAX: "8000"
     depends_on:
       - haproxy
-    links:
-      - "haproxy:neon"
+    networks:
+      - proxy
 
   haproxy:
     image: haproxy:2.9
@@ -39,6 +44,9 @@ services:
       - type: bind
         source: haproxy.cfg
         target: /usr/local/etc/haproxy/haproxy.cfg
+    networks:
+      proxy:
+        ipv4_address: 172.16.238.10
 
   proxy:
     image: "neondatabase/neon:release-4604"
@@ -71,3 +79,12 @@ services:
     depends_on:
       - cplane
       - postgres
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    ipam:
+      driver: default
+      config:
+        - subnet: "172.16.238.0/24"
