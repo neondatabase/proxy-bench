@@ -21,9 +21,9 @@ services:
     environment:
       PG_HOST: "neon"
       PG_ADDR: "haproxy:5432"
-      PG_CONNECTION_RATE: "400"
-      PG_CONNECTING_MAX: "1000"
-      PG_CONNECTION_MAX: "12000"
+      PG_CONNECTION_RATE: "800"
+      PG_CONNECTING_MAX: "100"
+      PG_CONNECTION_MAX: "4000"
     depends_on:
       - haproxy
 
