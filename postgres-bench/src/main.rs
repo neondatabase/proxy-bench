@@ -1,5 +1,6 @@
-use std::sync::Arc;
-use tokio::sync::Semaphore;
+use std::{net::SocketAddr, sync::Arc};
+use tokio::{net::TcpStream, sync::Semaphore};
+use tokio_postgres::{tls::MakeTlsConnect, Config};
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tokio_util::task::TaskTracker;
 
@@ -11,20 +12,27 @@ async fn main() {
             rustls::crypto::ring::default_provider(),
         )))
         .with_no_client_auth();
-    let tls_config = MakeRustlsConnect::new(tls_config);
+    let mut tls_config = MakeRustlsConnect::new(tls_config);
 
     let t = TaskTracker::new();
-    let s = Arc::new(Semaphore::new(100));
+    let s = Arc::new(Semaphore::new(300));
 
     for i in 0..10000 {
         let s = s.clone().acquire_owned().await.unwrap();
-        let conn_str = format!("postgresql://demo:password@ep-{i}.localtest.me/db");
-        let tls_config = tls_config.clone();
+        let config: Config = format!("postgresql://demo:password@ep-{i}.localtest.me/db")
+            .parse()
+            .unwrap();
+        let socket = TcpStream::connect(&SocketAddr::from(([127, 0, 0, 1], 5432)))
+            .await
+            .unwrap();
+        let tls = <MakeRustlsConnect as MakeTlsConnect<TcpStream>>::make_tls_connect(
+            &mut tls_config,
+            &format!("ep-{i}.localtest.me"),
+        )
+        .unwrap();
         t.spawn(async move {
             let _s = s;
-            let (client, connection) = tokio_postgres::connect(&conn_str, tls_config)
-                .await
-                .unwrap();
+            let (client, connection) = config.connect_raw(socket, tls).await.unwrap();
             tokio::spawn(connection);
             client.simple_query("select 1;").await.unwrap();
         });
