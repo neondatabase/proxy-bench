@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{error::Error, time::Duration};
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use hmac::{Hmac, Mac};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -21,28 +21,18 @@ async fn main() {
     }
 }
 
-async fn handle(mut s: TcpStream) {
+async fn handle(mut s: TcpStream) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut buf = BytesMut::new();
-    handshake(&mut s, &mut buf).await;
+    handshake(&mut s, &mut buf).await?;
 
     loop {
         // Ready for query (idle)
-        s.write_all(&b"Z\x00\x00\x00\x05I"[..]).await.unwrap();
-        let query = loop {
-            if buf.len() > 5 {
-                let len = u32::from_be_bytes(buf[1..5].try_into().unwrap()) as usize + 1;
-                if buf.len() >= len {
-                    break buf.split_to(len).freeze();
-                }
-            }
-            if s.read_buf(&mut buf).await.unwrap() == 0 {
-                panic!("eof");
-            }
-        };
+        s.write_all(&b"Z\x00\x00\x00\x05I"[..]).await?;
+        let query = read_packet(&mut s, &mut buf, 1).await?;
 
         // exit
         if query[0] == b'X' {
-            break;
+            break Ok(());
         }
 
         let query = &query
@@ -52,39 +42,31 @@ async fn handle(mut s: TcpStream) {
         match query {
             b"select 1;\0" => {
                 // row description: ?column?: int4
-                s.write_all(&b"T\x00\x00\x00\x21\x00\x01?column?\0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x17\x00\x04\x00\x00\x00\x00\x00\x00"[..]).await.unwrap();
+                s.write_all(&b"T\x00\x00\x00\x21\x00\x01?column?\0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x17\x00\x04\x00\x00\x00\x00\x00\x00"[..]).await?;
                 // row: [1]
                 s.write_all(&b"D\x00\x00\x00\x0b\x00\x01\x00\x00\x00\x011"[..])
-                    .await
-                    .unwrap();
+                    .await?;
                 // complete: SELECT 1
-                s.write_all(&b"C\x00\x00\x00\x0dSELECT 1\0"[..])
-                    .await
-                    .unwrap();
+                s.write_all(&b"C\x00\x00\x00\x0dSELECT 1\0"[..]).await?;
             }
             b"select pg_sleep(5);\0" => {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 // empty response
-                s.write_all(&b"I\x00\x00\x00\x04"[..]).await.unwrap();
+                s.write_all(&b"I\x00\x00\x00\x04"[..]).await?;
             }
             _ => {
                 // empty response
-                s.write_all(&b"I\x00\x00\x00\x04"[..]).await.unwrap();
+                s.write_all(&b"I\x00\x00\x00\x04"[..]).await?;
             }
         }
     }
 }
 
-async fn handshake(s: &mut TcpStream, mut buf: &mut BytesMut) {
-    let _startup = loop {
-        if buf.len() > 4 {
-            let len = u32::from_be_bytes(buf[..4].try_into().unwrap()) as usize;
-            if buf.len() >= len {
-                break buf.split_to(len).freeze();
-            }
-        }
-        s.read_buf(&mut buf).await.unwrap();
-    };
+async fn handshake(
+    s: &mut TcpStream,
+    buf: &mut BytesMut,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let _startup = read_packet(s, &mut *buf, 0).await?;
 
     // we support only scram-sha-256 (since proxy will require it)
     s.write_all(&b"R\x00\x00\x00\x17\x00\x00\x00\x0aSCRAM-SHA-256\0\0"[..])
@@ -92,15 +74,7 @@ async fn handshake(s: &mut TcpStream, mut buf: &mut BytesMut) {
         .unwrap();
 
     // wait for client first message
-    let auth_resp = loop {
-        if buf.len() > 5 {
-            let len = u32::from_be_bytes(buf[1..5].try_into().unwrap()) as usize + 1;
-            if buf.len() >= len {
-                break buf.split_to(len).freeze();
-            }
-        }
-        s.read_buf(&mut buf).await.unwrap();
-    };
+    let auth_resp = read_packet(s, &mut *buf, 1).await?;
     let salt = auth_resp
         .strip_prefix(&b"p\x00\x00\x00\x36SCRAM-SHA-256\0\x00\x00\x00\x20n,,n=,r="[..])
         .unwrap();
@@ -117,17 +91,7 @@ async fn handshake(s: &mut TcpStream, mut buf: &mut BytesMut) {
     s.write_all(&server_first_message).await.unwrap();
 
     // wait for client final message. we don't care for the data because who needs authentication...
-    let _auth_resp = loop {
-        if buf.len() > 5 {
-            let len = u32::from_be_bytes(buf[1..5].try_into().unwrap()) as usize + 1;
-            if buf.len() >= len {
-                break buf.split_to(len).freeze();
-            }
-        }
-        if s.read_buf(&mut buf).await.unwrap() == 0 {
-            return;
-        }
-    };
+    let _auth_resp = read_packet(s, &mut *buf, 1).await?;
 
     // server final message: proof for the client
     let server_key = b"\xde\x73\x22\xf1\xe0\x52\x1e\x08\x08\x04\xd4\xa0\x02\x29\x3a\x95\x09\xc4\xde\x14\x1c\xb1\x2f\xa6\xcb\x29\x59\x95\x88\x0d\x03\x55";
@@ -159,4 +123,24 @@ async fn handshake(s: &mut TcpStream, mut buf: &mut BytesMut) {
     s.write_all(&b"R\x00\x00\x00\x08\x00\x00\x00\x00"[..])
         .await
         .unwrap();
+
+    Ok(())
+}
+
+async fn read_packet(
+    s: &mut TcpStream,
+    buf: &mut BytesMut,
+    prefix: usize,
+) -> Result<Bytes, Box<dyn Error + Send + Sync>> {
+    loop {
+        if buf.len() > 4 + prefix {
+            let len = u32::from_be_bytes(buf[prefix..4 + prefix].try_into().unwrap()) as usize + 1;
+            if buf.len() >= len {
+                break Ok(buf.split_to(len).freeze());
+            }
+        }
+        if s.read_buf(buf).await.unwrap() == 0 {
+            break Err("eof".into());
+        }
+    }
 }
