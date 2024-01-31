@@ -123,6 +123,7 @@ async fn main() {
         let req = http.post(&url);
         tracker.spawn(async move {
             req.header("Neon-Connection-String", dsn)
+                .header("Neon-Pool-Opt-In", "true")
                 .json(&json!({
                     "query": "select 1",
                     "params": [],

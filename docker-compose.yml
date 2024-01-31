@@ -24,7 +24,7 @@ services:
     environment:
       PG_HOST: "neon"
       PG_ADDR: "haproxy:5432"
-      PG_CONNECTION_RATE: "1"
+      PG_CONNECTION_RATE: "20"
       PG_CONNECTING_MAX: "100"
       PG_CONNECTION_MAX: "200"
     depends_on:
@@ -32,7 +32,7 @@ services:
 
   haproxy:
     image: haproxy:2.9
-    scale: 4
+    scale: 2
     depends_on:
       - proxy
     volumes:
