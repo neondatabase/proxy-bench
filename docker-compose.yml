@@ -20,28 +20,28 @@ services:
       context: .
       dockerfile: Dockerfile
     entrypoint: /usr/local/bin/postgres-bench
-    scale: 8
+    scale: 1
     environment:
       PG_HOST: "neon"
-      PG_ADDR: "proxy:5432"
-      PG_CONNECTION_RATE: "100"
+      PG_ADDR: "haproxy:5432"
+      PG_CONNECTION_RATE: "1"
       PG_CONNECTING_MAX: "100"
       PG_CONNECTION_MAX: "200"
     depends_on:
       - proxy
 
-  # haproxy:
-  #   image: haproxy:2.9
-  #   scale: 4
-  #   depends_on:
-  #     - proxy
-  #   volumes:
-  #     - type: bind
-  #       source: haproxy.cfg
-  #       target: /usr/local/etc/haproxy/haproxy.cfg
+  haproxy:
+    image: haproxy:2.9
+    scale: 4
+    depends_on:
+      - proxy
+    volumes:
+      - type: bind
+        source: haproxy.cfg
+        target: /usr/local/etc/haproxy/haproxy.cfg
 
   proxy:
-    image: "neondatabase/neon:release-4604"
+    image: "neondatabase/neon:release-4713"
     command:
       - proxy
       - --auth-backend
@@ -57,7 +57,7 @@ services:
       - --mgmt
       - "0.0.0.0:8080"
       - --wss
-      - "0.0.0.0:4443"
+      - "0.0.0.0:443"
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
     volumes:
@@ -71,6 +71,9 @@ services:
       - cplane
       - postgres
       - jaeger
+    ports:
+      - "5432:5432"
+      - "4443:443"
 
   jaeger:
     image: jaegertracing/all-in-one:latest

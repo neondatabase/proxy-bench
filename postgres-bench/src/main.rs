@@ -1,6 +1,6 @@
 use rand::{thread_rng, Rng};
 use rand_distr::Zipf;
-use std::{sync::Arc, time::Duration};
+use std::{net::ToSocketAddrs, sync::Arc, time::Duration};
 use tokio::{
     net::TcpStream,
     signal::unix::{signal, SignalKind},
@@ -10,6 +10,7 @@ use tokio::{
 use tokio_postgres::{tls::MakeTlsConnect, Config};
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tokio_util::task::TaskTracker;
+use typed_json::json;
 
 #[tokio::main]
 async fn main() {
@@ -49,6 +50,15 @@ async fn main() {
 
     let mut last = Instant::now();
     let mut counter = 0;
+
+    let url = format!("https://api.{host}/sql");
+    let addrs: Vec<_> = addr.to_socket_addrs().unwrap().collect();
+    let http = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .use_rustls_tls()
+        .resolve_to_addrs(&format!("api.{host}"), &addrs)
+        .build()
+        .unwrap();
 
     let mut signal = signal(SignalKind::terminate()).unwrap();
 
@@ -108,6 +118,23 @@ async fn main() {
 
             // release
             drop(connection_guard);
+        });
+
+        let req = http.post(&url);
+        tracker.spawn(async move {
+            req.header("Neon-Connection-String", dsn)
+                .json(&json!({
+                    "query": "select 1",
+                    "params": [],
+                }))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
         });
     }
 

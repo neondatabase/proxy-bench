@@ -1,6 +1,6 @@
 use std::{error::Error, time::Duration};
 
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use hmac::{Hmac, Mac};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -30,36 +30,99 @@ async fn handle(mut s: TcpStream) -> Result<(), Box<dyn Error + Send + Sync>> {
         s.write_all(&b"Z\x00\x00\x00\x05I"[..]).await?;
         let query = read_packet(&mut s, &mut buf, 1).await?;
 
-        // exit
-        if query[0] == b'X' {
-            break Ok(());
-        }
-
-        let query = &query
-            .strip_prefix(b"Q")
-            .expect("only handles simple queries")[4..];
-
-        match query {
-            b"select 1;\0" => {
-                // row description: ?column?: int4
-                s.write_all(&b"T\x00\x00\x00\x21\x00\x01?column?\0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x17\x00\x04\x00\x00\x00\x00\x00\x00"[..]).await?;
-                // row: [1]
-                s.write_all(&b"D\x00\x00\x00\x0b\x00\x01\x00\x00\x00\x011"[..])
-                    .await?;
-                // complete: SELECT 1
-                s.write_all(&b"C\x00\x00\x00\x0dSELECT 1\0"[..]).await?;
-            }
-            b"select pg_sleep(5);\0" => {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                // empty response
-                s.write_all(&b"I\x00\x00\x00\x04"[..]).await?;
-            }
-            _ => {
-                // empty response
-                s.write_all(&b"I\x00\x00\x00\x04"[..]).await?;
-            }
+        match query[0] {
+            b'X' => break Ok(()),
+            b'Q' => simple_query(&mut s, query).await?,
+            b'P' => extended_query(&mut s, &mut buf, query).await?,
+            x => unimplemented!("unknown command code {x}"),
         }
     }
+}
+
+async fn simple_query(s: &mut TcpStream, query: Bytes) -> Result<(), Box<dyn Error + Send + Sync>> {
+    match &query[5..] {
+        b"select 1;\0" => {
+            // row description: ?column?: int4
+            s.write_all(&b"T\x00\x00\x00\x21\x00\x01?column?\0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x17\x00\x04\x00\x00\x00\x00\x00\x00"[..]).await?;
+            // row: [1]
+            s.write_all(&b"D\x00\x00\x00\x0b\x00\x01\x00\x00\x00\x011"[..])
+                .await?;
+            // complete: SELECT 1
+            s.write_all(&b"C\x00\x00\x00\x0dSELECT 1\0"[..]).await?;
+        }
+        b"select pg_sleep(5);\0" => {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            // empty response
+            s.write_all(&b"I\x00\x00\x00\x04"[..]).await?;
+        }
+        _ => {
+            // empty response
+            s.write_all(&b"I\x00\x00\x00\x04"[..]).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn extended_query(
+    s: &mut TcpStream,
+    buf: &mut BytesMut,
+    mut query: Bytes,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    assert_eq!(query[5], 0, "unexpected named parse command");
+    query.advance(6);
+    let i = query.iter().position(|&x| x == 0).unwrap();
+    let query = &query[..i];
+
+    // describe statement
+    let describe = read_packet(&mut *s, &mut *buf, 1).await?;
+    assert_eq!(&*describe, b"D\x00\x00\x00\x06S\x00", "expected describe");
+
+    // unnamed bind statement with no args
+    let bind = read_packet(&mut *s, &mut *buf, 1).await?;
+    assert_eq!(&*bind, b"B\x00\x00\x00\x0c\x00\x00\x00\x00\x00\x00\x00\x00", "expected empty bind");
+
+    // execute
+    let exec = read_packet(&mut *s, &mut *buf, 1).await?;
+    assert_eq!(&*exec, b"E\x00\x00\x00\x09\x00\x00\x00\x00\x00", "expected empty exec");
+
+    // sync
+    let sync = read_packet(&mut *s, &mut *buf, 1).await?;
+    assert_eq!(&*sync, b"S\x00\x00\x00\x04", "expected sync");
+
+    // parse complete
+    s.write_all(&b"1\x00\x00\x00\x04"[..]).await?;
+
+    // param description: []
+    s.write_all(&b"t\x00\x00\x00\x06\x00\x00"[..]).await?;
+
+    match query {
+        b"select 1\0" => {
+            // row description: ?column?: int4
+            s.write_all(&b"T\x00\x00\x00\x21\x00\x01?column?\0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x17\x00\x04\x00\x00\x00\x00\x00\x00"[..]).await?;
+            // bind complete
+            s.write_all(&b"2\x00\x00\x00\x04"[..]).await?;
+
+            // row: [1]
+            s.write_all(&b"D\x00\x00\x00\x0b\x00\x01\x00\x00\x00\x011"[..])
+                .await?;
+            // complete: SELECT 1
+            s.write_all(&b"C\x00\x00\x00\x0dSELECT 1\0"[..]).await?;
+        }
+        b"select pg_sleep(5)\0" => {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            // empty response
+            s.write_all(&b"n\x00\x00\x00\x04"[..]).await?;
+            // bind complete
+            s.write_all(&b"2\x00\x00\x00\x04"[..]).await?;
+        }
+        _ => {
+            // empty response
+            s.write_all(&b"n\x00\x00\x00\x04"[..]).await?;
+            // bind complete
+            s.write_all(&b"2\x00\x00\x00\x04"[..]).await?;
+        }
+    }
+    Ok(())
 }
 
 async fn handshake(
