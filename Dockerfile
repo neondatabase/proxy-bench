@@ -17,4 +17,5 @@ WORKDIR /app
 COPY --from=builder /app/target/release/postgres-mock /usr/local/bin
 COPY --from=builder /app/target/release/cplane-mock /usr/local/bin
 COPY --from=builder /app/target/release/postgres-bench /usr/local/bin
+COPY --from=builder /app/target/release/http-bench /usr/local/bin
 

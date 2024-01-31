@@ -529,6 +529,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-bench"
+version = "0.1.0"
+dependencies = [
+ "rand",
+ "rand_distr",
+ "reqwest",
+ "tokio",
+ "tokio-util",
+ "typed-json",
+]
+
+[[package]]
 name = "http-body"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -919,14 +931,12 @@ version = "0.1.0"
 dependencies = [
  "rand",
  "rand_distr",
- "reqwest",
  "rustls 0.22.2",
  "rustls-pki-types",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
  "tokio-util",
- "typed-json",
 ]
 
 [[package]]

@@ -1,5 +1,6 @@
 *
 !postgres-bench
+!http-bench
 !postgres-mock
 !cplane-mock
 !Cargo.*

@@ -197,7 +197,7 @@ async fn read_packet(
 ) -> Result<Bytes, Box<dyn Error + Send + Sync>> {
     loop {
         if buf.len() > 4 + prefix {
-            let len = u32::from_be_bytes(buf[prefix..4 + prefix].try_into().unwrap()) as usize + 1;
+            let len = u32::from_be_bytes(buf[prefix..4 + prefix].try_into().unwrap()) as usize + prefix;
             if buf.len() >= len {
                 break Ok(buf.split_to(len).freeze());
             }

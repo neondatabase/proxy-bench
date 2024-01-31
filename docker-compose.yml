@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     entrypoint: /usr/local/bin/postgres-mock
     scale: 1
+    ports:
+      - "5431:5432"
 
   cplane:
     build:
@@ -20,11 +22,11 @@ services:
       context: .
       dockerfile: Dockerfile
     entrypoint: /usr/local/bin/postgres-bench
-    scale: 1
+    scale: 4
     environment:
       PG_HOST: "neon"
       PG_ADDR: "haproxy:5432"
-      PG_CONNECTION_RATE: "20"
+      PG_CONNECTION_RATE: "30"
       PG_CONNECTING_MAX: "100"
       PG_CONNECTION_MAX: "200"
     depends_on:
@@ -37,7 +39,7 @@ services:
       - proxy
     volumes:
       - type: bind
-        source: haproxy.cfg
+        source: config/haproxy.cfg
         target: /usr/local/etc/haproxy/haproxy.cfg
 
   proxy:
@@ -54,12 +56,13 @@ services:
       - proxy.key
       - --proxy
       - "0.0.0.0:5432"
-      - --mgmt
+      - --http
       - "0.0.0.0:8080"
       - --wss
       - "0.0.0.0:443"
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
+      RUST_LOG: "info"
     volumes:
       - type: bind
         source: target/proxy.crt
@@ -70,10 +73,42 @@ services:
     depends_on:
       - cplane
       - postgres
-      - jaeger
     ports:
       - "5432:5432"
       - "4443:443"
 
   jaeger:
     image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    ports:
+      - 9090:9090
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: config/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+      - prom_data:/prometheus
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - 3000:3000
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=grafana
+    volumes:
+      - type: bind
+        source: config/grafana.yml
+        target: /etc/grafana/provisioning/datasources/datasource.yml
+
+volumes:
+  prom_data:
