@@ -79,7 +79,7 @@ async fn extended_query(
 
     // unnamed bind statement with no args
     let bind = read_packet(&mut *s, &mut *buf, 1).await?;
-    assert_eq!(&*bind, b"B\x00\x00\x00\x0c\x00\x00\x00\x00\x00\x00\x00\x00", "expected empty bind");
+    assert_eq!(&*bind, b"B\x00\x00\x00\x0e\0\0\x00\x00\x00\x00\x00\x01\x00\x00", "expected empty bind");
 
     // execute
     let exec = read_packet(&mut *s, &mut *buf, 1).await?;
@@ -196,7 +196,7 @@ async fn read_packet(
     prefix: usize,
 ) -> Result<Bytes, Box<dyn Error + Send + Sync>> {
     loop {
-        if buf.len() > 4 + prefix {
+        if buf.len() >= 4 + prefix {
             let len = u32::from_be_bytes(buf[prefix..4 + prefix].try_into().unwrap()) as usize + prefix;
             if buf.len() >= len {
                 break Ok(buf.split_to(len).freeze());

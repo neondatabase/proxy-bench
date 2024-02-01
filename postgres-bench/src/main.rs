@@ -1,5 +1,5 @@
 use rand::{thread_rng, Rng};
-use rand_distr::Zipf;
+use rand_distr::{LogNormal, Zipf};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     net::TcpStream,
@@ -53,6 +53,7 @@ async fn main() {
     let mut signal = signal(SignalKind::terminate()).unwrap();
 
     let endpoint_dist = Zipf::new(100000, 1.01).unwrap();
+    let endpoint_dur = LogNormal::new(duration_until_full.as_secs_f64(), 3.0).unwrap();
     loop {
         let now = tokio::select! {
             _ = signal.recv() => break,
@@ -75,7 +76,7 @@ async fn main() {
             last = now;
             counter = 0;
         }
-        let exit_time = now + duration_until_full;
+        let exit_time = now + Duration::from_secs_f64(thread_rng().sample(endpoint_dur));
 
         let in_flight = limiter.clone().acquire_owned().await.unwrap();
         let connection_guard = conn_limiter.clone().acquire_owned().await.unwrap();

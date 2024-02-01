@@ -4,7 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
     entrypoint: /usr/local/bin/postgres-mock
-    scale: 1
+    deploy:
+      replicas: 1
     ports:
       - "5431:5432"
 
@@ -13,7 +14,8 @@ services:
       context: .
       dockerfile: Dockerfile
     entrypoint: /usr/local/bin/cplane-mock
-    scale: 1
+    deploy:
+      replicas: 1
     environment:
       PROXY_COMPUTE_ADDR: "postgres:5432"
 
@@ -22,15 +24,31 @@ services:
       context: .
       dockerfile: Dockerfile
     entrypoint: /usr/local/bin/postgres-bench
-    scale: 4
+    deploy:
+      replicas: 4
     environment:
       PG_HOST: "neon"
       PG_ADDR: "haproxy:5432"
-      PG_CONNECTION_RATE: "30"
+      PG_CONNECTION_RATE: "50"
       PG_CONNECTING_MAX: "100"
-      PG_CONNECTION_MAX: "200"
+      PG_CONNECTION_MAX: "250"
     depends_on:
-      - proxy
+      - haproxy
+
+  http-load:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: /usr/local/bin/http-bench
+    deploy:
+      replicas: 1
+    environment:
+      PG_HOST: "neon"
+      PG_ADDR: "haproxy:5432"
+      PG_CONNECTION_RATE: "50"
+      PG_CONNECTION_MAX: "5"
+    depends_on:
+      - haproxy
 
   haproxy:
     image: haproxy:2.9
@@ -60,6 +78,10 @@ services:
       - "0.0.0.0:8080"
       - --wss
       - "0.0.0.0:443"
+      - --project-info-cache
+      - "size=100000,ttl=60m,max_roles=10,gc_interval=60m"
+      - --wake-compute-cache
+      - "size=100000,ttl=60m"
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
       RUST_LOG: "info"
@@ -77,10 +99,10 @@ services:
       - "5432:5432"
       - "4443:443"
 
-  jaeger:
-    image: jaegertracing/all-in-one:latest
-    ports:
-      - "16686:16686"
+  # jaeger:
+  #   image: jaegertracing/all-in-one:latest
+  #   ports:
+  #     - "16686:16686"
 
   prometheus:
     image: prom/prometheus
