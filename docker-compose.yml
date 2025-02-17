@@ -18,6 +18,8 @@ services:
       replicas: 1
     environment:
       PROXY_COMPUTE_ADDR: "postgres:5432"
+    ports:
+      - "3010:3010"
 
   load:
     build:
@@ -61,13 +63,13 @@ services:
         target: /usr/local/etc/haproxy/haproxy.cfg
 
   proxy:
-    image: "neondatabase/neon:release-4713"
+    image: "neondatabase/neon:release-7765"
     command:
       - proxy
       - --auth-backend
-      - console
+      - cplane-v1
       - --auth-endpoint
-      - "http://cplane:3000/authenticate_proxy_request"
+      - "http://cplane:3010/proxy/api/v1"
       - -c
       - proxy.crt
       - -k
