@@ -27,14 +27,6 @@ async fn main() {
         .expect("missing var PG_CONNECTION_MAX")
         .parse()
         .unwrap();
-    // let chunk_rate: f64 = std::env::var("PG_CHUNK_RATE")
-    //     .expect("missing var PG_CHUNK_RATE")
-    //     .parse()
-    //     .unwrap();
-    // let chunk_size: u32 = std::env::var("PG_CHUNK_SIZE")
-    //     .expect("missing var PG_CHUNK_SIZE")
-    //     .parse()
-    //     .unwrap();
 
     let report_interval = Duration::from_secs_f64(5.0);
     let interval = Duration::from_secs_f64(connection_rate.recip());
@@ -53,7 +45,7 @@ async fn main() {
     let mut signal = signal(SignalKind::terminate()).unwrap();
 
     let endpoint_dist = Zipf::new(100000, 1.01).unwrap();
-    let endpoint_dur = LogNormal::new(duration_until_full.as_secs_f64(), 3.0).unwrap();
+    let endpoint_dur = LogNormal::new(duration_until_full.as_secs_f64(), 2.0).unwrap();
     loop {
         let now = tokio::select! {
             _ = signal.recv() => break,
@@ -76,7 +68,8 @@ async fn main() {
             last = now;
             counter = 0;
         }
-        let exit_time = now + Duration::from_secs_f64(thread_rng().sample(endpoint_dur));
+        let duration_secs = thread_rng().sample(endpoint_dur);
+        let exit_time = now + safe_duration_from_secs_f64(duration_secs);
 
         let in_flight = limiter.clone().acquire_owned().await.unwrap();
         let connection_guard = conn_limiter.clone().acquire_owned().await.unwrap();
@@ -94,21 +87,28 @@ async fn main() {
         counter += 1;
         tracker.spawn(async move {
             let socket = connect.await.unwrap();
-            let (client, connection) = config.connect_raw(socket, tls).await.unwrap();
-            drop(in_flight);
+            match config.connect_raw(socket, tls).await {
+                Ok((client, connection)) => {
+                    drop(in_flight);
+                    let handle = tokio::spawn(connection);
 
-            let handle = tokio::spawn(connection);
+                    // trigger some constant bandwidth
+                    // client.query("select data_stream($1, $2)", &[&chunk_rate, &chunk_size]).await.unwrap();
+                    client.simple_query("select 1;").await.unwrap();
 
-            // trigger some constant bandwidth
-            // client.query("select data_stream($1, $2)", &[&chunk_rate, &chunk_size]).await.unwrap();
-            client.simple_query("select 1;").await.unwrap();
+                    tokio::time::sleep_until(exit_time).await;
+                    drop(client);
+                    handle.await.unwrap().unwrap();
 
-            tokio::time::sleep_until(exit_time).await;
-            drop(client);
-            handle.await.unwrap().unwrap();
-
-            // release
-            drop(connection_guard);
+                    // release
+                    drop(connection_guard);
+                },
+                Err(e) => {
+                    println!("Connection error: {:?}", e);
+                    drop(in_flight);
+                    drop(connection_guard);
+                }
+            }
         });
     }
 
@@ -185,4 +185,14 @@ mod danger {
             self.0.signature_verification_algorithms.supported_schemes()
         }
     }
+}
+
+fn safe_duration_from_secs_f64(seconds: f64) -> Duration {
+    const MAX_SECONDS: f64 = 86400.0;
+
+    if seconds.is_nan() || !seconds.is_finite() || seconds < 0.0 {
+        return Duration::from_secs(60);
+    }
+
+    Duration::from_secs_f64(seconds.min(MAX_SECONDS))
 }
