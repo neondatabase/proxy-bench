@@ -31,9 +31,9 @@ services:
     environment:
       PG_HOST: "neon"
       PG_ADDR: "haproxy:5432"
-      PG_CONNECTION_RATE: "50"
-      PG_CONNECTING_MAX: "100"
-      PG_CONNECTION_MAX: "250"
+      PG_CONNECTION_RATE: "${PG_CONNECTION_RATE:-50}"
+      PG_CONNECTING_MAX: "${PG_CONNECTING_MAX:-150}"
+      PG_CONNECTION_MAX: "${PG_CONNECTION_MAX:-250}"
     depends_on:
       - haproxy
 
@@ -47,8 +47,8 @@ services:
     environment:
       PG_HOST: "neon"
       PG_ADDR: "haproxy:5432"
-      PG_CONNECTION_RATE: "50"
-      PG_CONNECTION_MAX: "5"
+      PG_CONNECTION_RATE: "${HTTP_CONNECTION_RATE:-50}"
+      PG_CONNECTION_MAX: "${HTTP_CONNECTION_MAX:-5}"
     depends_on:
       - haproxy
 
@@ -63,7 +63,7 @@ services:
         target: /usr/local/etc/haproxy/haproxy.cfg
 
   proxy:
-    image: "neondatabase/neon:release-7765"
+    image: "ghcr.io/neondatabase/neon:latest"
     command:
       - proxy
       - --auth-backend
@@ -86,7 +86,7 @@ services:
       - "size=100000,ttl=60m"
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
-      RUST_LOG: "info"
+      RUST_LOG: "debug"
     volumes:
       - type: bind
         source: target/proxy.crt
@@ -108,6 +108,7 @@ services:
 
   prometheus:
     image: prom/prometheus
+    user: root
     container_name: prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -119,6 +120,7 @@ services:
         source: config/prometheus.yml
         target: /etc/prometheus/prometheus.yml
       - prom_data:/prometheus
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   grafana:
     image: grafana/grafana

@@ -77,17 +77,7 @@ async fn extended_query(
     let describe = read_packet(&mut *s, &mut *buf, 1).await?;
     assert_eq!(&*describe, b"D\x00\x00\x00\x06S\x00", "expected describe");
 
-    // unnamed bind statement with no args
-    let bind = read_packet(&mut *s, &mut *buf, 1).await?;
-    assert_eq!(&*bind, b"B\x00\x00\x00\x0e\0\0\x00\x00\x00\x00\x00\x01\x00\x00", "expected empty bind");
-
-    // execute
-    let exec = read_packet(&mut *s, &mut *buf, 1).await?;
-    assert_eq!(&*exec, b"E\x00\x00\x00\x09\x00\x00\x00\x00\x00", "expected empty exec");
-
-    // sync
-    let sync = read_packet(&mut *s, &mut *buf, 1).await?;
-    assert_eq!(&*sync, b"S\x00\x00\x00\x04", "expected sync");
+    let _flush = read_packet(&mut *s, &mut *buf, 1).await?;
 
     // parse complete
     s.write_all(&b"1\x00\x00\x00\x04"[..]).await?;
@@ -96,32 +86,66 @@ async fn extended_query(
     s.write_all(&b"t\x00\x00\x00\x06\x00\x00"[..]).await?;
 
     match query {
+        q if q.starts_with(b"SELECT t.oid, t.typname, t.typarray") => {
+            s.write_all(&b"T\x00\x00\x00\x22\x00\x01oid\0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x17\x00\x04\x00\x00\x00\x00\x00\x00"[..]).await?;
+        }
         b"select 1\0" => {
-            // row description: ?column?: int4
             s.write_all(&b"T\x00\x00\x00\x21\x00\x01?column?\0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x17\x00\x04\x00\x00\x00\x00\x00\x00"[..]).await?;
-            // bind complete
-            s.write_all(&b"2\x00\x00\x00\x04"[..]).await?;
+        }
+        b"select pg_sleep(5)\0" | _ => {
+            // If no result columns, send NoData
+            s.write_all(&b"n\x00\x00\x00\x04"[..]).await?;
+        }
+    }
 
+    // Bind
+    let bind = read_packet(s, buf, 1).await?;
+    assert_eq!(
+        &*bind,
+        b"B\x00\x00\x00\x0e\0\0\x00\x00\x00\x00\x00\x01\x00\x00",
+        "expected empty bind"
+    );
+
+    // Execute
+    let exec = read_packet(s, buf, 1).await?;
+    assert_eq!(
+        &*exec,
+        b"E\x00\x00\x00\x09\x00\x00\x00\x00\x00",
+        "expected empty exec"
+    );
+
+    // Sync
+    let sync = read_packet(s, buf, 1).await?;
+    assert_eq!(&*sync, b"S\x00\x00\x00\x04", "expected sync");
+
+    // BindComplete
+    s.write_all(&b"2\x00\x00\x00\x04"[..]).await?;
+
+    match query {
+        q if q.starts_with(b"SELECT t.oid, t.typname, t.typarray") => {
+            // row: [1234] (or whatever OID they're querying)
+            s.write_all(&b"D\x00\x00\x00\x0b\x00\x01\x00\x00\x00\x041234"[..]).await?;
+            // complete: SELECT 1
+            s.write_all(&b"C\x00\x00\x00\x0dSELECT 1\0"[..]).await?;
+        }
+        b"select 1\0" => {
             // row: [1]
-            s.write_all(&b"D\x00\x00\x00\x0b\x00\x01\x00\x00\x00\x011"[..])
-                .await?;
+            s.write_all(&b"D\x00\x00\x00\x0b\x00\x01\x00\x00\x00\x011"[..]).await?;
             // complete: SELECT 1
             s.write_all(&b"C\x00\x00\x00\x0dSELECT 1\0"[..]).await?;
         }
         b"select pg_sleep(5)\0" => {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            // empty response
-            s.write_all(&b"n\x00\x00\x00\x04"[..]).await?;
-            // bind complete
-            s.write_all(&b"2\x00\x00\x00\x04"[..]).await?;
+            // complete: SELECT 1 (or NoData if no output)
+            s.write_all(&b"C\x00\x00\x00\x0dSELECT 1\0"[..]).await?;
         }
         _ => {
-            // empty response
-            s.write_all(&b"n\x00\x00\x00\x04"[..]).await?;
-            // bind complete
-            s.write_all(&b"2\x00\x00\x00\x04"[..]).await?;
+            // complete SELECT 1?
+            s.write_all(&b"C\x00\x00\x00\x0dSELECT 1\0"[..]).await?;
         }
     }
+
+    s.write_all(&b"Z\x00\x00\x00\x05I"[..]).await?;
     Ok(())
 }
 
