@@ -82,6 +82,7 @@ struct WakeComputeQuery {
 #[derive(Serialize)]
 struct WakeComputeResponse {
     pub address: String,
+    pub server_name: Option<String>,
     pub aux: MetricsAuxInfo,
 }
 
@@ -89,8 +90,35 @@ struct WakeComputeResponse {
 pub struct MetricsAuxInfo {
     pub endpoint_id: String,
     pub project_id: String,
-    pub branch_id: &'static str,
+    pub branch_id: String,
+    // note: we don't use interned strings for compute IDs.
+    // they churn too quickly and we have no way to clean up interned strings.
+    pub compute_id: String,
+    #[serde(default)]
+    pub cold_start_info: ColdStartInfo,
 }
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum ColdStartInfo {
+    #[default]
+    Unknown,
+    /// Compute was already running
+    Warm,
+    #[serde(rename = "pool_hit")]
+    /// Compute was not running but there was an available VM
+    VmPoolHit,
+    #[serde(rename = "pool_miss")]
+    /// Compute was not running and there were no VMs available
+    VmPoolMiss,
+
+    // not provided by control plane
+    /// Connection available from HTTP pool
+    HttpPoolHit,
+    /// Cached connection info
+    WarmCached,
+}
+
 
 async fn wake_compute(
     query: Query<WakeComputeQuery>,
@@ -100,10 +128,13 @@ async fn wake_compute(
     let project_id = endpoint_id_to_project_id(&query.endpointish);
     Json(WakeComputeResponse {
         address: state.compute_address.clone(),
+        server_name: None,
         aux: MetricsAuxInfo {
-            endpoint_id: query.0.endpointish,
+            endpoint_id: query.0.endpointish.clone(),
             project_id,
-            branch_id: "main",
+            branch_id: "main".to_string(),
+            compute_id: format!("compute-123"),
+            cold_start_info: ColdStartInfo::Warm,
         },
     })
 }
