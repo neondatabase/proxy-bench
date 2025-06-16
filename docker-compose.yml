@@ -84,9 +84,10 @@ services:
       - "size=100000,ttl=60m,max_roles=10,gc_interval=60m"
       - --wake-compute-cache
       - "size=100000,ttl=60m"
+      - --proxy-protocol-v2=required
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
-      RUST_LOG: "debug"
+      RUST_LOG: "info"
     volumes:
       - type: bind
         source: target/proxy.crt
@@ -120,7 +121,6 @@ services:
         source: config/prometheus.yml
         target: /etc/prometheus/prometheus.yml
       - prom_data:/prometheus
-      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   grafana:
     image: grafana/grafana

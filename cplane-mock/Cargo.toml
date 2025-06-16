@@ -7,5 +7,3 @@ edition = "2021"
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.7", default-features = false, features = ["query", "http2", "json", "tokio"] }
 serde = { version = "1", features = ["derive"]}
-measured = { version = "0.0.22", features=["lasso"] }
-measured-process = { version = "0.0.22" }
