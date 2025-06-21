@@ -27,6 +27,5 @@ Additionally you can set parameters for the load test via the env variables befo
 `$PG_CONNECTION_RATE`, default is 50
 `$PG_CONNECTING_MAX`, default is 150
 `$PG_CONNECTION_MAX`, default is 250
-
 `$HTTP_CONNECTION_RATE`, default is 50
 `$HTTP_CONNECTION_MAX`, default is 5
