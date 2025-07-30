@@ -22,6 +22,11 @@ Or you can simply run all of this with some report via:
 ./run.sh
 ```
 
+To run it bare metal with grafana support use (with specified `$NEON_PROXY_PATH` path):
+```sh
+./run.sh --bare-metal --grafana
+```
+
 Additionally you can set parameters for the load test via the env variables beforehand (per replica):
 
 `$PG_CONNECTION_RATE`, default is 50
