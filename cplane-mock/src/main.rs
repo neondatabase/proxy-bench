@@ -48,7 +48,13 @@ struct RoleSecretQuery {
 const SCRAM_PASSWORD: &str = "SCRAM-SHA-256$4096:M2ZX/kfDSd3vv5iFO/QNUA==$mookt3EiEpd/vMqGbd7df3qVwfyUfM91Ps72sNewNg4=:3nMi8eBSHggIBNSgAik6lQnE3hQcsS+myylZlYgNA1U=";
 
 #[derive(Serialize)]
+struct RoleAccessControl {
+    scram_secret: Option<&'static str>,
+}
+
+#[derive(Serialize)]
 struct RoleSecretResponse {
+    role_access: RoleAccessControl,
     role_secret: &'static str,
     allowed_ips: Option<Vec<String>>,
     allowed_vpc_endpoint_ids: Option<Vec<String>>,
@@ -62,13 +68,16 @@ async fn get_endpoint_access_control(query: Query<RoleSecretQuery>) -> Json<Role
     let project_id = endpoint_id_to_project_id(&query.endpointish);
     println!("get_endpoint_access_control: project_id: {}", project_id);
     Json(RoleSecretResponse {
+        role_access: RoleAccessControl {
+            scram_secret: Some(SCRAM_PASSWORD),
+        },
         role_secret: SCRAM_PASSWORD,
-        allowed_ips: None,
-        allowed_vpc_endpoint_ids: None,
+        allowed_ips: Some(vec![]),
+        allowed_vpc_endpoint_ids: Some(vec![]),
         project_id: Some(project_id),
         account_id: None,
-        block_public_connections: None,
-        block_vpc_connections: None,
+        block_public_connections: Some(false),
+        block_vpc_connections: Some(false),
     })
 }
 
