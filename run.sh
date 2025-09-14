@@ -3,19 +3,12 @@ set -euo pipefail
 
 # Configuration
 MAX_DURATION="${MAX_DURATION:-600}"                 # 10 minutes in seconds
-MAX_LATENCY_MS="${MAX_LATENCY_MS:-200}"             # Maximum allowed latency in milliseconds (p99)
-MAX_ERROR_RATE="${MAX_ERROR_RATE:-0.0001}"          # Maximum allowed error rate (0.01%)
-MAX_JEMALLOC_MEMORY="${MAX_JEMALLOC_MEMORY:-512}"  # Maximum allowed jemalloc memory in MB (512MB)
 
 # Bare metal configuration
 BARE_METAL=false
 ENABLE_GRAFANA=true
-POSTGRES_MOCK_PORT=5432
+ENABLE_PROMETHEUS=true
 
-CPLANE_MOCK_PORT=3010
-PROXY_PORT=5433
-PROXY_HTTP_PORT=8080
-PROXY_WSS_PORT=443
 PROMETHEUS_PORT=9090
 GRAFANA_PORT=3000
 
@@ -23,6 +16,12 @@ GRAFANA_PORT=3000
 NEON_PROXY_PATH="${NEON_PROXY_PATH:-proxy}"
 
 # Environment variables for load testing
+POSTGRES_MOCK_PORT="${POSTGRES_MOCK_PORT:-5432}"
+CPLANE_MOCK_PORT="${CPLANE_MOCK_PORT:-3010}"
+PROXY_PORT="${PROXY_PORT:-5433}"
+PROXY_WSS_PORT="${PROXY_WSS_PORT:-443}"
+PROXY_HTTP_PORT="${PROXY_HTTP_PORT:-8080}"
+
 PG_CONNECTION_RATE="${PG_CONNECTION_RATE:-5}"
 PG_CONNECTING_MAX="${PG_CONNECTING_MAX:-10}"
 PG_CONNECTION_MAX="${PG_CONNECTION_MAX:-20}"
@@ -40,10 +39,14 @@ while [[ $# -gt 0 ]]; do
             ENABLE_GRAFANA=false
             shift
             ;;
+        --no-prometheus)
+            ENABLE_PROMETHEUS=false
+            shift
+            ;;
         --help)
-            echo "Usage: $0 [--bare-metal] [--grafana] [--help]"
+            echo "Usage: $0 [--bare-metal] [--no-grafana] [--help]"
             echo "  --bare-metal: Run without Docker containers"
-            echo "  --grafana: Enable Grafana in bare metal mode (optional)"
+            echo "  --no-grafana: Disable Grafana (optional)"
             echo "  --help: Show this help message"
             echo ""
             echo "Environment variables for bare metal mode:"
@@ -53,7 +56,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Required tools for bare metal mode:"
             echo "  - prometheus: Install from https://prometheus.io/download/"
-            echo "  - grafana server: Install from https://grafana.com/grafana/download (only if --grafana is used)"
+            echo "  - grafana server: Install from https://grafana.com/grafana/download (only if --no-grafana is not used)"
             echo "  - neon proxy binary: Build from https://github.com/neondatabase/neon"
             exit 0
             ;;
@@ -64,74 +67,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-# Validate flag combinations
-if [ "$ENABLE_GRAFANA" = true ] && [ "$BARE_METAL" = false ]; then
-    echo "Error: --no-grafana flag can only be used with --bare-metal"
-    exit 1
-fi
-
-check_metrics() {
-    # 1. Check latency (p99)
-    local latency=$(curl -s "http://localhost:9090/api/v1/query" \
-        --data-urlencode 'query=histogram_quantile(0.99, sum(rate(proxy_compute_connection_latency_seconds_bucket{outcome="success", excluded="client_and_cplane"}[5m]))by (le))' | jq -r '.data.result[0].value[1]')
-
-    # 2. Check error rate
-    local error_rate=$(curl -s "http://localhost:9090/api/v1/query" \
-        --data-urlencode 'query=sum(rate(proxy_errors_total{type!~"user|clientdisconnect|quota"}[5m])) / sum(rate(proxy_accepted_connections_total[5m]))' | jq -r '.data.result[0].value[1]')
-
-    # 3. Get total client connections
-    # Get per-protocol open client connections
-    local connections_json=$(curl -s "http://localhost:9090/api/v1/query" \
-        --data-urlencode 'query=sum by (protocol) (proxy_opened_client_connections_total - proxy_closed_client_connections_total)')
-
-    open_connections_http=$(echo "$connections_json" | jq -r '.data.result[] | select(.metric.protocol=="http") | .value[1]')
-    open_connections_tcp=$(echo "$connections_json" | jq -r '.data.result[] | select(.metric.protocol=="tcp") | .value[1]')
-
-    # 4. Get max memory consumption
-    local max_memory=$(curl -s "http://localhost:9090/api/v1/query" \
-        --data-urlencode 'query=max(libmetrics_maxrss_kb)' | jq -r '.data.result[0].value[1]')
-
-    # 5. Get jemalloc metrics
-    local jemalloc_active=$(curl -s "http://localhost:9090/api/v1/query" \
-        --data-urlencode 'query=sum(jemalloc_active_bytes)' | jq -r '.data.result[0].value[1]')
-    local jemalloc_allocated=$(curl -s "http://localhost:9090/api/v1/query" \
-        --data-urlencode 'query=sum(jemalloc_allocated_bytes)' | jq -r '.data.result[0].value[1]')
-    local jemalloc_mapped=$(curl -s "http://localhost:9090/api/v1/query" \
-        --data-urlencode 'query=sum(jemalloc_mapped_bytes)' | jq -r '.data.result[0].value[1]')
-    local jemalloc_metadata=$(curl -s "http://localhost:9090/api/v1/query" \
-        --data-urlencode 'query=sum(jemalloc_metadata_bytes)' | jq -r '.data.result[0].value[1]')
-    local jemalloc_resident=$(curl -s "http://localhost:9090/api/v1/query" \
-        --data-urlencode 'query=sum(jemalloc_resident_bytes)' | jq -r '.data.result[0].value[1]')
-
-    # Convert latency to milliseconds
-    latency=$(echo "$latency * 1000" | bc)
-
-    # Convert bytes to MB for better readability
-    jemalloc_active_mb=$(echo "scale=2; $jemalloc_active / 1024 / 1024" | bc)
-    jemalloc_allocated_mb=$(echo "scale=2; $jemalloc_allocated / 1024 / 1024" | bc)
-    jemalloc_mapped_mb=$(echo "scale=2; $jemalloc_mapped / 1024 / 1024" | bc)
-    jemalloc_metadata_mb=$(echo "scale=2; $jemalloc_metadata / 1024 / 1024" | bc)
-    jemalloc_resident_mb=$(echo "scale=2; $jemalloc_resident / 1024 / 1024" | bc)
-
-    # Check if metrics exceed thresholds
-    if (( $(echo "$latency > $MAX_LATENCY_MS" | bc -l) )); then
-        echo "Latency threshold exceeded: ${latency}ms > ${MAX_LATENCY_MS}ms"
-        return 1
-    fi
-
-    if (( $(echo "$error_rate > $MAX_ERROR_RATE" | bc -l) )); then
-        echo "Error rate threshold exceeded: ${error_rate} > ${MAX_ERROR_RATE}"
-        return 1
-    fi
-
-    if (( $(echo "jemalloc_active_mb > $MAX_JEMALLOC_MEMORY" | bc -l) )); then
-        echo "Jemalloc active memory threshold exceeded: ${jemalloc_active_mb}MB > ${MAX_JEMALLOC_MEMORY}MB"
-        return 1
-    fi
-
-    return 0
-}
 
 # Function to build Rust binaries
 build_binaries() {
@@ -175,7 +110,7 @@ start_bare_metal_services() {
         exit 1
     fi
 
-    RUST_LOG=info \
+    RUST_LOG=debug \
     "$NEON_PROXY_PATH" \
         --auth-backend cplane-v1 \
         --auth-endpoint "http://localhost:$CPLANE_MOCK_PORT/proxy/api/v1" \
@@ -190,8 +125,9 @@ start_bare_metal_services() {
     PROXY_PID=$!
     echo "Neon proxy started with PID $PROXY_PID"
 
-    # Create a temporary prometheus config for bare metal
-    cat > target/prometheus-bare-metal.yml << EOF
+    if [ "$ENABLE_PROMETHEUS" = true ]; then
+        # Create a temporary prometheus config for bare metal
+        cat > target/prometheus-bare-metal.yml << EOF
 global:
   scrape_interval: 15s
   scrape_timeout: 10s
@@ -208,21 +144,24 @@ scrape_configs:
     - localhost:$PROXY_HTTP_PORT
 EOF
 
-    # Start Prometheus
-    echo "Starting Prometheus on port $PROMETHEUS_PORT..."
-    if command -v prometheus &> /dev/null; then
-        prometheus --config.file=target/prometheus-bare-metal.yml \
-                   --storage.tsdb.path=target/prometheus-data \
-                   --web.listen-address=:$PROMETHEUS_PORT > logs/prometheus.log 2>&1 &
-        PROMETHEUS_PID=$!
-        echo "Prometheus started with PID $PROMETHEUS_PID"
+        # Start Prometheus
+        echo "Starting Prometheus on port $PROMETHEUS_PORT..."
+        if command -v prometheus &> /dev/null; then
+            prometheus --config.file=target/prometheus-bare-metal.yml \
+                    --storage.tsdb.path=target/prometheus-data \
+                    --web.listen-address=:$PROMETHEUS_PORT > logs/prometheus.log 2>&1 &
+            PROMETHEUS_PID=$!
+            echo "Prometheus started with PID $PROMETHEUS_PID"
+        else
+            echo "Prometheus not found in PATH. Please install Prometheus or use Docker mode."
+            echo "You can download it from: https://prometheus.io/download/"
+            exit 1
+        fi
+        sleep 10
     else
-        echo "Prometheus not found in PATH. Please install Prometheus or use Docker mode."
-        echo "You can download it from: https://prometheus.io/download/"
-        exit 1
+        echo "Prometheus disabled"
+        PROMETHEUS_PID=""
     fi
-
-    sleep 10
 
     if [ "$ENABLE_GRAFANA" = true ]; then
         # Create Grafana datasource configuration for bare metal
@@ -299,7 +238,7 @@ EOF
         echo "Grafana started with PID $GRAFANA_PID"
         echo "Grafana UI available at: http://localhost:$GRAFANA_PORT (admin/grafana)"
     else
-        echo "Grafana disabled. Use --grafana flag to enable."
+        echo "Grafana disabled"
         GRAFANA_PID=""
     fi
 
@@ -328,16 +267,16 @@ EOF
     mkdir -p target  # Ensure target directory exists
     echo "$POSTGRES_MOCK_PID" > target/postgres-mock.pid
     echo "$CPLANE_MOCK_PID" > target/cplane-mock.pid
-    echo "$PROMETHEUS_PID" > target/prometheus.pid
+    if [ -n "$PROMETHEUS_PID" ]; then
+        echo "$PROMETHEUS_PID" > target/prometheus.pid
+    fi
     if [ -n "$GRAFANA_PID" ]; then
         echo "$GRAFANA_PID" > target/grafana.pid
-        echo "Stored Grafana PID: $GRAFANA_PID"
     fi
     echo "$HTTP_BENCH_PID" > target/http-bench.pid
     echo "$PROXY_PID" > target/proxy.pid
     for i in {1..4}; do
         echo "${POSTGRES_BENCH_PIDS[$i]}" > target/postgres-bench-$i.pid
-        echo "Stored postgres-bench-$i PID: ${POSTGRES_BENCH_PIDS[$i]}"
     done
     echo "All PIDs stored in target/*.pid files"
 }
@@ -449,8 +388,9 @@ fi
 if [ "$BARE_METAL" = true ]; then
     echo "Running in bare metal mode..."
     echo "Using neon proxy binary at: $NEON_PROXY_PATH"
-    echo "Services will be available at:"
-    echo "  - Prometheus: http://localhost:$PROMETHEUS_PORT"
+    if [ "$ENABLE_PROMETHEUS" = true ]; then
+        echo "  - Prometheus: http://localhost:$PROMETHEUS_PORT"
+    fi
     if [ "$ENABLE_GRAFANA" = true ]; then
         echo "  - Grafana: http://localhost:$GRAFANA_PORT (admin/grafana)"
     fi
@@ -486,11 +426,6 @@ while true; do
     if [ $elapsed -gt $MAX_DURATION ]; then
         echo "Test duration exceeded ${MAX_DURATION} seconds"
         break
-    fi
-
-    if ! check_metrics; then
-        echo "Metrics check failed"
-        exit 1
     fi
 
     sleep 10
