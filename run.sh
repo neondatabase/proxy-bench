@@ -340,6 +340,14 @@ stop_bare_metal_services() {
 
 # Trap to ensure cleanup on exit
 cleanup() {
+    if [ "$CLEANUP_STARTED" = true ]; then
+        echo "Cleanup already in progress. Skipping."
+        return
+    fi
+    CLEANUP_STARTED=true
+
+    trap '' EXIT INT TERM
+
     echo "=== CLEANUP TRIGGERED ==="
     echo "Cleanup reason: $1"
     if [ "$BARE_METAL" = true ]; then
