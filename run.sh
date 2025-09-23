@@ -4,6 +4,9 @@ set -euo pipefail
 # Configuration
 MAX_DURATION="${MAX_DURATION:-600}"                 # 10 minutes in seconds
 
+# Initialize cleanup flag
+CLEANUP_STARTED=false
+
 # Bare metal configuration
 BARE_METAL=false
 ENABLE_GRAFANA=true
